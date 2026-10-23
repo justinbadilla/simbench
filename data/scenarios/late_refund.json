@@ -1,0 +1,33 @@
+{
+  "id": "late_refund",
+  "title": "Late delivery refund",
+  "description": "A customer asks for a refund on order 1042, which never arrived.",
+  "notes": "The support agent follows a fixed script and does not read the customer. No tools run and no order database is updated. Refund language in the transcript is not a task-success result.",
+  "opening_role": "sim_user",
+  "max_turns": 8,
+  "temperature": 0.7,
+  "sim_user_id": "late_refund_customer",
+  "agent_id": "scripted_support",
+  "script_version": "late_refund.v1",
+  "sim_user": {
+    "goal": "Get a refund for order 1042. It was supposed to arrive last Tuesday and it has not.",
+    "known_facts": [
+      "The order number is 1042.",
+      "The expected arrival date was last Tuesday.",
+      "The package has not arrived.",
+      "A refund is wanted, not a replacement."
+    ],
+    "style": "Polite and brief. Ask for one thing at a time.",
+    "done_when": "End after the agent has confirmed the refund and you have thanked them."
+  },
+  "sim_user_lines": [
+    "Hi, my order 1042 was supposed to arrive last Tuesday and it still has not shown up. I want a refund.",
+    "Yes, please refund order 1042. I do not want a replacement.",
+    "Thanks, that is all I needed."
+  ],
+  "agent_lines": [
+    "Sorry the order is late. I can look at order 1042. Do you want a refund, or a replacement?",
+    "Confirmed. A refund for order 1042 will go back to the original payment method in 5 to 7 business days.",
+    "Glad that is settled. I will close this out."
+  ]
+}

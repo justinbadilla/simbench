@@ -1,0 +1,44 @@
+[
+  {
+    "turn": {
+      "message": "Hi, my order 1042 was supposed to arrive last Tuesday and it still has not shown up. I want a refund.",
+      "end_conversation": false
+    },
+    "model_name": "gemini-3.5-flash-lite",
+    "provider": "replay",
+    "input_tokens": 100,
+    "output_tokens": 24,
+    "latency_ms": 410.0,
+    "requests": 1,
+    "free_tier": true,
+    "estimated_cost_usd": 0.00009
+  },
+  {
+    "turn": {
+      "message": "Yes, a refund please. I do not want a replacement.",
+      "end_conversation": false
+    },
+    "model_name": "gemini-3.5-flash-lite",
+    "provider": "replay",
+    "input_tokens": 140,
+    "output_tokens": 18,
+    "latency_ms": 380.0,
+    "requests": 1,
+    "free_tier": true,
+    "estimated_cost_usd": 0.000087
+  },
+  {
+    "turn": {
+      "message": "Thanks, that is all I needed.",
+      "end_conversation": true
+    },
+    "model_name": "gemini-3.5-flash-lite",
+    "provider": "replay",
+    "input_tokens": 180,
+    "output_tokens": 14,
+    "latency_ms": 360.0,
+    "requests": 1,
+    "free_tier": true,
+    "estimated_cost_usd": 0.000089
+  }
+]
