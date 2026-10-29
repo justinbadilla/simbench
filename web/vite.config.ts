@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/runs": "http://127.0.0.1:8000",
+      "/runs": process.env.SIMBENCH_API_URL ?? "http://127.0.0.1:8000",
     },
   },
 });

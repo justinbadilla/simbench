@@ -1,4 +1,8 @@
-"""V1 API: one endpoint. The SimUser is a model unless the request asks for the script."""
+"""HTTP API: one endpoint, ``POST /runs``. The SimUser is a model unless the request asks for the script.
+
+The API is a thin layer. It validates the request, picks the runner, saves the
+transcript, and returns it. All simulation logic lives in ``core/simbench``.
+"""
 
 from pathlib import Path
 
@@ -27,10 +31,29 @@ def create_app(
     model: str = DEFAULT_GEMINI_MODEL,
     missing_key_detail: str | None = None,
 ) -> FastAPI:
+    """Build the FastAPI app with its dependencies injected.
+
+    Taking the database path and LLM client as arguments lets tests pass a temp
+    file and a mock client, so no test touches the network or the real log.
+
+    Args:
+        db_path: SQLite file for stored runs; defaults to ``data/simbench.sqlite``.
+        llm_client: Client for LLM runs. ``None`` means no key is configured and
+            LLM runs answer with HTTP 503.
+        model: Model name passed to every LLM run.
+        missing_key_detail: Message for the 503; defaults to the provider-specific
+            text from ``missing_key_message``.
+
+    Returns:
+        The configured app, with CORS limited to the local Vite dev server.
+
+    Called by:
+        Module import (below) for the real server, and the API tests.
+    """
     app = FastAPI(
         title="SimBench",
         version="0.0.1",
-        description="V1 runs an LLM SimUser against a scripted support agent and stores the transcript.",
+        description="Runs a simulated customer against a scripted support agent, checks it, and stores the transcript.",
     )
     app.state.db_path = default_db_path() if db_path is None else db_path
     app.state.llm_client = llm_client
@@ -45,6 +68,21 @@ def create_app(
 
     @app.post("/runs", response_model=Transcript)
     def create_run(body: RunRequest | None = None) -> Transcript:
+        """Run one simulation, store it, and return the transcript.
+
+        An empty body uses the defaults in ``RunRequest`` (LLM mode, stateful variant).
+
+        Returns:
+            The full ``Transcript``, which is also saved to SQLite.
+
+        Raises:
+            HTTPException: 404 for an unknown scenario, 503 when no API key is
+                configured, 400 when the scenario has no SimUser spec. Pydantic
+                returns 422 for an invalid body (for example an unknown variant).
+
+        Called by:
+            The web UI's "Run simulation" button.
+        """
         request = body or RunRequest()
         try:
             scenario = load_scenario(request.scenario_id)
@@ -63,6 +101,7 @@ def create_app(
                 client,
                 max_turns=request.max_turns,
                 model=app.state.model,
+                variant=request.variant,
                 seed=request.seed,
             )
         save_transcript(app.state.db_path, transcript)

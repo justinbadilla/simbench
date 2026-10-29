@@ -9,6 +9,7 @@ from simbench.scenario import Scenario, load_scenario
 
 
 def brief_scenario(**overrides: object) -> Scenario:
+    """A small scenario with a one-fact SimUser spec and two agent lines. Keyword arguments override fields."""
     data: dict[str, object] = {
         "id": "fixture",
         "title": "Fixture",
@@ -21,10 +22,17 @@ def brief_scenario(**overrides: object) -> Scenario:
         "agent_id": "scripted_support",
         "script_version": "fixture.v1",
         "sim_user": {
-            "goal": "Get a refund for order 1042.",
-            "known_facts": ["The order number is 1042."],
+            "goal": {"text": "Get a refund for order 1042.", "markers": ["refund"]},
             "style": "Brief.",
             "done_when": "End after the agent confirms the refund and you have thanked them.",
+            "facts": [
+                {
+                    "id": "order_number",
+                    "text": "The order number is 1042.",
+                    "markers": ["1042"],
+                    "required": True,
+                }
+            ],
         },
         "agent_lines": [
             "Do you want a refund or a replacement?",
@@ -36,6 +44,7 @@ def brief_scenario(**overrides: object) -> Scenario:
 
 
 def turns(*pairs: tuple[str, bool]) -> list[SimUserTurn]:
+    """Build model replies from ``(message, end_conversation)`` pairs."""
     return [SimUserTurn(message=message, end_conversation=done) for message, done in pairs]
 
 
@@ -64,7 +73,8 @@ def test_customer_opens_and_the_next_prompt_includes_the_agent_line() -> None:
     assert transcript.usage.latency_ms == 50.0
     assert transcript.usage.requests == 2
     assert transcript.usage.free_tier is False
-    assert transcript.usage.prompt_version == "sim_user.v1+fixture.v1"
+    assert transcript.usage.prompt_version == "sim_user.v2.stateful+fixture.v1"
+    assert transcript.variant == "stateful"
     assert "Get a refund for order 1042." in transcript.system_prompt
     assert len(client.calls) == 2
     second_prompt = client.calls[1]["messages"][1]["content"]
@@ -99,6 +109,8 @@ def test_agent_script_ends_the_run_when_the_customer_does_not() -> None:
 
 def test_model_error_keeps_the_messages_already_said() -> None:
     class Flaky:
+        """Client that answers once, then fails with a timeout that already spent some tokens."""
+
         def __init__(self) -> None:
             self.calls = 0
 
@@ -198,8 +210,10 @@ def test_bundled_scenario_replay_ends_when_the_fixture_says_so() -> None:
     assert transcript.termination_reason is TerminationReason.sim_user_ended
     assert transcript.usage.provider == "replay"
     assert transcript.usage.free_tier is True
-    assert transcript.usage.requests == 3
+    assert transcript.usage.requests == 4
     assert [message.role for message in transcript.messages] == [
+        Role.sim_user,
+        Role.agent,
         Role.sim_user,
         Role.agent,
         Role.sim_user,
@@ -207,9 +221,14 @@ def test_bundled_scenario_replay_ends_when_the_fixture_says_so() -> None:
         Role.sim_user,
     ]
     assert "no order database" in transcript.notes
+    # The hand-written fixture behaves well, so every applicable check passes.
+    assert transcript.checks is not None
+    assert transcript.checks.all_passed is True
+    assert [check.name for check in transcript.checks.checks if check.passed is None] == []
 
 
 def fixture_path():
+    """Path to the bundled replay fixture for ``late_refund``."""
     from simbench.paths import repo_root
 
     return repo_root() / "data" / "cassettes" / "late_refund.fixture.json"

@@ -7,32 +7,25 @@ from pydantic import BaseModel, Field, field_validator
 
 from simbench.models import Role
 from simbench.paths import scenarios_dir
+from simbench.spec import SimUserSpec
 
 
 class ScenarioNotFoundError(LookupError):
+    """Raised when no scenario file exists for a requested id. The API maps it to HTTP 404."""
+
     def __init__(self, scenario_id: str) -> None:
+        """Remember the missing id on ``scenario_id`` and build the error message."""
         self.scenario_id = scenario_id
         super().__init__(f"Unknown scenario: {scenario_id}")
 
 
-class SimUserBrief(BaseModel):
-    """Prompt inputs for an LLM SimUser. This is not a memory store."""
-
-    goal: str = Field(min_length=1)
-    known_facts: list[str] = Field(min_length=1)
-    style: str = Field(min_length=1)
-    done_when: str = Field(min_length=1)
-
-    @field_validator("known_facts")
-    @classmethod
-    def facts_have_text(cls, facts: list[str]) -> list[str]:
-        for fact in facts:
-            if not fact.strip():
-                raise ValueError("known facts must contain text")
-        return facts
-
-
 class Scenario(BaseModel):
+    """One configurable test case: who talks first, turn cap, SimUser spec, and agent script.
+
+    Loaded from ``data/scenarios/<id>.json``. Nothing about a specific scenario
+    is hard-coded in the runner, so a new scenario is a new file.
+    """
+
     id: str = Field(min_length=1)
     title: str = Field(min_length=1)
     description: str
@@ -43,25 +36,50 @@ class Scenario(BaseModel):
     sim_user_id: str = Field(min_length=1)
     agent_id: str = Field(min_length=1)
     script_version: str = Field(min_length=1)
-    sim_user: SimUserBrief | None = None
+    sim_user: SimUserSpec | None = None
     sim_user_lines: list[str] = Field(default_factory=list)
     agent_lines: list[str] = Field(default_factory=list)
 
     @field_validator("sim_user_lines", "agent_lines")
     @classmethod
     def lines_are_non_empty(cls, lines: list[str]) -> list[str]:
+        """Pydantic hook: reject blank script lines, which would produce empty messages."""
         for line in lines:
             if not line.strip():
                 raise ValueError("script lines must contain text")
         return lines
 
     def lines_for(self, role: Role) -> list[str]:
+        """Return the scripted lines for a speaker.
+
+        Called by:
+            ``run_simulation`` (both roles) and ``run_llm_simulation`` (agent
+            only, since the customer is a model there).
+        """
         if role is Role.sim_user:
             return self.sim_user_lines
         return self.agent_lines
 
 
 def load_scenario(scenario_id: str, directory: Path | None = None) -> Scenario:
+    """Read and validate a scenario file by id.
+
+    Args:
+        scenario_id: File stem under the scenarios directory (``late_refund``).
+        directory: Override the search folder; defaults to ``data/scenarios``.
+            Tests use this to load fixtures.
+
+    Returns:
+        The validated ``Scenario``.
+
+    Raises:
+        ScenarioNotFoundError: If the file does not exist.
+        ValueError: If the file's ``id`` field disagrees with its filename, or
+            validation fails (``pydantic.ValidationError`` is a ``ValueError``).
+
+    Called by:
+        The API's ``create_run`` and the test suite.
+    """
     directory = scenarios_dir() if directory is None else directory
     path = directory / f"{scenario_id}.json"
     if not path.is_file():

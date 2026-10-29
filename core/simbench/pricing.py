@@ -25,10 +25,26 @@ _USD_PER_MILLION: dict[str, tuple[float, float]] = {
 
 
 def has_price(model_name: str) -> bool:
+    """Return True if the local table has a list price for this exact model name."""
     return model_name in _USD_PER_MILLION
 
 
 def estimate_cost_usd(model_name: str, input_tokens: int, output_tokens: int) -> float | None:
+    """Estimate what a call would cost at paid list prices.
+
+    Args:
+        model_name: Exact model name as reported by the provider.
+        input_tokens: Prompt tokens used.
+        output_tokens: Completion tokens used (including reasoning tokens when
+            the provider bills them as output).
+
+    Returns:
+        Cost in US dollars rounded to 8 places, or ``None`` if the model has no
+        price in the table. ``None`` is deliberate: an unknown price is never guessed.
+
+    Called by:
+        The provider adapters in ``llm.py`` after each response or failure.
+    """
     rates = _USD_PER_MILLION.get(model_name)
     if rates is None:
         return None

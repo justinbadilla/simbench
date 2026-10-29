@@ -6,6 +6,16 @@ from simbench.paths import repo_root
 
 
 def load_local_env() -> None:
+    """Read ``.env`` at the repo root into ``os.environ``.
+
+    Blank lines, comments, and lines without ``=`` are skipped, and surrounding
+    quotes are stripped from values. Variables already set in the shell win, so
+    an exported value overrides the file. Does nothing if ``.env`` is missing.
+    Values are never printed or logged.
+
+    Called by:
+        ``simbench_api.main`` at import time, before the LLM client is built.
+    """
     path = repo_root() / ".env"
     if not path.is_file():
         return

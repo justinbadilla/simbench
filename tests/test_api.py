@@ -19,8 +19,10 @@ def test_post_runs_returns_an_alternating_transcript_and_stores_it(tmp_path) -> 
     assert body["termination_reason"] == "script_complete"
     assert body["usage"]["model_name"] is None
     roles = [message["role"] for message in body["messages"]]
-    assert roles == ["sim_user", "agent", "sim_user", "agent", "sim_user", "agent"]
-    assert [message["turn_index"] for message in body["messages"]] == list(range(6))
+    assert roles == ["sim_user", "agent"] * 4
+    assert [message["turn_index"] for message in body["messages"]] == list(range(8))
+    assert body["variant"] == "scripted"
+    assert body["checks"] is None
 
     loaded = load_transcript(db_path, body["run_id"])
     assert loaded is not None
@@ -80,6 +82,42 @@ def test_llm_run_is_stored_with_usage(tmp_path) -> None:
     loaded = load_transcript(db_path, body["run_id"])
     assert loaded is not None
     assert loaded.messages[0].content == "I want a refund for order 1042."
+
+
+def test_llm_run_returns_variant_checks_and_state(tmp_path) -> None:
+    db_path = tmp_path / "runs.sqlite"
+    fake = MockLLMClient(
+        [
+            SimUserTurn(
+                message="Hi, order 1042 was due last Tuesday. I want a refund.",
+                end_conversation=False,
+            ),
+            SimUserTurn(message="It is jordan.lee@example.com.", end_conversation=False),
+            SimUserTurn(message="A refund please.", end_conversation=False),
+            SimUserTurn(message="Thanks, that is all.", end_conversation=True),
+        ]
+    )
+    client = TestClient(create_app(db_path=db_path, llm_client=fake, model="gpt-4o-mini"))
+
+    response = client.post("/runs", json={"variant": "persona", "seed": 5})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["variant"] == "persona"
+    assert body["checks"]["all_passed"] is True
+    assert body["checks"]["checks_version"] == "checks.v1"
+    assert len(body["turn_prompts"]) == 4
+    assert body["sim_user_spec"]["facts"][0]["id"] == "order_number"
+    assert [event["kind"] for event in body["state_log"]][:3] == ["revealed"] * 3
+    loaded = load_transcript(db_path, body["run_id"])
+    assert loaded is not None and loaded.checks is not None
+    assert loaded.checks.all_passed is True
+
+
+def test_unknown_variant_is_rejected(tmp_path) -> None:
+    client = TestClient(create_app(db_path=tmp_path / "runs.sqlite"))
+
+    assert client.post("/runs", json={"variant": "chaotic"}).status_code == 422
 
 
 def test_missing_api_key_is_a_server_error(tmp_path) -> None:

@@ -303,6 +303,8 @@ Describe it as independent / open-source research. Do not use a founder title un
 
 - 2026-10-23: Provider switched to the Gemini free tier (default `gemini-3.5-flash-lite`) at the owner's request, to avoid any chance of a bill. The OpenAI adapter stays behind the same interface (`SIMBENCH_PROVIDER`). Runs now also log HTTP request count (free-tier quotas count requests) and a `free_tier` flag. The logged cost is a paid-rate estimate and is labeled as such on free-tier runs. The Gemini adapter is tested only against a fake transport until a real key is used.
 
+- 2026-10-23: V2 built. The `late_refund` SimUser now has a spec (facts with `volunteer` or `on_request` disclosure, required facts, unknown facts, goal and abandon markers). Two prompt variants, `persona` (fixed prompt) and `stateful` (harness-owned state, prompt rebuilt each turn, prompt id `sim_user.v2.<variant>+<script_version>`). `checks.v1` has six deterministic keyword checks and runs after each conversation; tests include deliberate violations for each. Transcripts also store the variant, per-turn prompts, spec, and state log. UI has a variant selector, checks panel, and state log. Scenario `script_version` is `late_refund.v2` and the replay fixture was rewritten (illustrative, not live). Bias flags for any later experiment: checks are keyword-based and miss paraphrase and invented facts; the unlock-phrase heuristic can misfire; stateful-versus-persona leakage is partly true by construction (the hidden fact is never in the stateful prompt); markers and prompts must be tuned on dev scenarios only; only one scenario exists. No live V2 run has been recorded yet. Optional V2 items (embedding memory, reflection step) were not built. Research question remains open.
+
 ### Free-tier implications to keep in mind
 - **Quota caps study size.** Roughly 500 requests a day on Flash-Lite (read the real figure in AI Studio) is plenty for V1 to V4 pilots but not for a large pool. A V5 pool of hundreds of conversations, each several requests, with an LLM agent doing its own calls from V3 on, would take many days or exceed the quota. Size the study to the quota, record that in the protocol, or use a local open model for bulk runs.
 - **Reproducibility.** Hosted model versions change and previews retire. Every run stores the model version the provider reports and the raw transcript, and replay fixtures keep old runs usable. Do not treat a rerun a month later as the same simulator without checking the model version.
@@ -311,7 +313,7 @@ Describe it as independent / open-source research. Do not use a founder title un
 - **Demo.** The V6 public demo stays in replay mode. A shared free-tier key is not suitable for public live runs.
 
 ### Immediate next actions
-V0 and V1 are in the repo. A live V1 conversation needs `GEMINI_API_KEY` in `.env` and a server restart. Next milestone is V2 (SimUser state kept separate from chat history, with leakage and goal-adherence checks), only when asked.
+V0, V1, and V2 are in the repo. A live conversation needs `GEMINI_API_KEY` in `.env` and a server restart. Before V3, run each variant live a few times (3 to 4 requests per run) and read the transcripts and checks by hand to see where the keyword checks are wrong. Next milestone is V3 (mock orders database, agent tools, agent versions), only when asked.
 
 ---
 

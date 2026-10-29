@@ -6,6 +6,7 @@ from simbench.scenario import Scenario, load_scenario
 
 
 def scenario(**overrides: object) -> Scenario:
+    """A minimal scripted scenario (two lines each). Keyword arguments override fields."""
     data: dict[str, object] = {
         "id": "fixture",
         "title": "Fixture",
@@ -24,6 +25,7 @@ def scenario(**overrides: object) -> Scenario:
 
 
 def assert_turn_order(transcript_messages: list, opening: Role) -> None:
+    """Assert indexes count up from zero and speakers alternate, starting with ``opening``."""
     expected = opening
     for index, message in enumerate(transcript_messages):
         assert message.turn_index == index
@@ -97,7 +99,7 @@ def test_bundled_late_refund_scenario_completes_in_order() -> None:
     transcript = run_simulation(load_scenario("late_refund"))
 
     assert transcript.scenario_id == "late_refund"
-    assert len(transcript.messages) == 6
+    assert len(transcript.messages) == 8
     assert_turn_order(transcript.messages, Role.sim_user)
     assert transcript.messages[0].content.startswith("Hi, my order 1042")
     assert transcript.termination_reason is TerminationReason.script_complete

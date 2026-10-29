@@ -1,31 +1,45 @@
 [
   {
     "turn": {
-      "message": "Hi, my order 1042 was supposed to arrive last Tuesday and it still has not shown up. I want a refund.",
+      "message": "Hi, my order 1042 was supposed to arrive last Tuesday and it still has not shown up. I would like a refund.",
       "end_conversation": false
     },
     "model_name": "gemini-3.5-flash-lite",
     "provider": "replay",
-    "input_tokens": 100,
-    "output_tokens": 24,
-    "latency_ms": 410.0,
+    "input_tokens": 150,
+    "output_tokens": 28,
+    "latency_ms": 420.0,
     "requests": 1,
     "free_tier": true,
-    "estimated_cost_usd": 0.00009
+    "estimated_cost_usd": 0.000115
   },
   {
     "turn": {
-      "message": "Yes, a refund please. I do not want a replacement.",
+      "message": "The email on the account is jordan.lee@example.com.",
       "end_conversation": false
     },
     "model_name": "gemini-3.5-flash-lite",
     "provider": "replay",
-    "input_tokens": 140,
+    "input_tokens": 210,
     "output_tokens": 18,
-    "latency_ms": 380.0,
+    "latency_ms": 360.0,
     "requests": 1,
     "free_tier": true,
-    "estimated_cost_usd": 0.000087
+    "estimated_cost_usd": 0.000108
+  },
+  {
+    "turn": {
+      "message": "A refund please. The tracking number TRK-88213 has not moved, so I do not want a replacement.",
+      "end_conversation": false
+    },
+    "model_name": "gemini-3.5-flash-lite",
+    "provider": "replay",
+    "input_tokens": 270,
+    "output_tokens": 30,
+    "latency_ms": 390.0,
+    "requests": 1,
+    "free_tier": true,
+    "estimated_cost_usd": 0.000156
   },
   {
     "turn": {
@@ -34,11 +48,11 @@
     },
     "model_name": "gemini-3.5-flash-lite",
     "provider": "replay",
-    "input_tokens": 180,
-    "output_tokens": 14,
-    "latency_ms": 360.0,
+    "input_tokens": 330,
+    "output_tokens": 12,
+    "latency_ms": 340.0,
     "requests": 1,
     "free_tier": true,
-    "estimated_cost_usd": 0.000089
+    "estimated_cost_usd": 0.000129
   }
 ]

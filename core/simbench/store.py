@@ -7,6 +7,14 @@ from simbench.models import Transcript
 
 
 def init_db(path: Path) -> None:
+    """Create the database file, its folder, and the ``runs`` table if missing.
+
+    Safe to call repeatedly. The table stores the full transcript as JSON, with
+    a few columns (id, time, scenario) kept separate for easy querying.
+
+    Called by:
+        ``save_transcript`` and ``load_transcript`` before every access.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as connection:
         connection.execute(
@@ -22,6 +30,19 @@ def init_db(path: Path) -> None:
 
 
 def save_transcript(path: Path, transcript: Transcript) -> None:
+    """Append one transcript to the log as raw JSON.
+
+    Args:
+        path: SQLite file to write.
+        transcript: The finished run. Failed runs are saved too.
+
+    Raises:
+        sqlite3.IntegrityError: If a transcript with the same ``run_id`` exists.
+            Runs are never overwritten.
+
+    Called by:
+        The API's ``create_run`` after every run.
+    """
     init_db(path)
     with sqlite3.connect(path) as connection:
         connection.execute(
@@ -39,6 +60,14 @@ def save_transcript(path: Path, transcript: Transcript) -> None:
 
 
 def load_transcript(path: Path, run_id: str) -> Transcript | None:
+    """Read one stored transcript back by run id.
+
+    Returns:
+        The validated ``Transcript``, or ``None`` if no such run exists.
+
+    Called by:
+        The tests, to confirm what was stored. No endpoint reads runs back yet.
+    """
     init_db(path)
     with sqlite3.connect(path) as connection:
         row = connection.execute(

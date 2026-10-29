@@ -9,6 +9,7 @@ from simbench.pricing import estimate_cost_usd
 
 
 def _body(content: str, *, model: str = "gpt-4o-mini", prompt_tokens: int = 11, completion_tokens: int = 7) -> dict:
+    """Build a fake OpenAI chat-completions response body with the given text and token counts."""
     return {
         "model": model,
         "choices": [{"message": {"content": content}}],
@@ -17,6 +18,7 @@ def _body(content: str, *, model: str = "gpt-4o-mini", prompt_tokens: int = 11, 
 
 
 def _client(handler, *, key: str = "sk-test-secret", sleeper=None, max_attempts: int = 3) -> OpenAIClient:
+    """Build an ``OpenAIClient`` wired to a fake transport; retries do not really sleep."""
     return OpenAIClient(
         api_key=key,
         transport=httpx.MockTransport(handler),
@@ -165,6 +167,7 @@ def _gemini_body(
     candidate_tokens: int = 6,
     thought_tokens: int = 0,
 ) -> dict:
+    """Build a fake Gemini ``generateContent`` response body with the given text and token counts."""
     usage = {"promptTokenCount": prompt_tokens, "candidatesTokenCount": candidate_tokens}
     if thought_tokens:
         usage["thoughtsTokenCount"] = thought_tokens
@@ -176,6 +179,7 @@ def _gemini_body(
 
 
 def _gemini(handler, *, key: str = "AIza-test-secret", free_tier: bool = True, sleeper=None, delays=None) -> GeminiClient:
+    """Build a ``GeminiClient`` wired to a fake transport; ``delays`` collects the waits it would have slept."""
     return GeminiClient(
         api_key=key,
         free_tier=free_tier,
