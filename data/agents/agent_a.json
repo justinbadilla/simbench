@@ -1,0 +1,10 @@
+{
+  "id": "agent_a",
+  "label": "Agent A",
+  "description": "Basic prompt. Can look up orders but cannot refund. Is not shown the company policy.",
+  "prompt": "basic",
+  "tools": [
+    "lookup_order"
+  ],
+  "include_policy": false
+}

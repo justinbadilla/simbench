@@ -1,0 +1,10 @@
+{
+  "id": "agent_b_prime",
+  "label": "Agent B-prime",
+  "description": "An identical copy of Agent B, for A/A comparisons. Any difference between it and B is noise.",
+  "prompt": "careful",
+  "tools": [
+    "lookup_order"
+  ],
+  "include_policy": true
+}

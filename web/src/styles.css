@@ -347,3 +347,11 @@ pre {
   background: #f3efe6;
   border-radius: 10px;
 }
+
+.tool-call {
+  grid-template-columns: 4.5rem 1fr auto;
+}
+
+.tool-call code {
+  overflow-wrap: anywhere;
+}

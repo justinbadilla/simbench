@@ -11,10 +11,10 @@ import os
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 import httpx
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from simbench.pricing import estimate_cost_usd, has_price
 
@@ -94,25 +94,123 @@ class SimUserTurn(BaseModel):
         return cleaned
 
 
-class LLMCall(BaseModel):
-    """The result of one successful ``complete`` call: the turn plus its usage.
+# JSON schema for one agent step: either call a tool or reply to the customer.
+# Tool arguments travel as a JSON *string* (``arguments_json``) rather than a nested
+# object, because free-form objects are the part of JSON schema that providers
+# support least consistently. The agent loop parses the string itself. Every field
+# is always present (empty text when unused) so OpenAI's strict mode accepts it.
+AGENT_ACTION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "action": {"type": "string", "enum": ["tool_call", "reply"]},
+        "tool": {"type": "string"},
+        "arguments_json": {"type": "string"},
+        "message": {"type": "string"},
+    },
+    "required": ["action", "tool", "arguments_json", "message"],
+}
+
+
+class AgentAction(BaseModel):
+    """One structured step from the agent model: call a tool, or reply to the customer.
+
+    For ``tool_call``, ``tool`` names the tool and ``arguments_json`` holds its
+    arguments as JSON text. For ``reply``, ``message`` is what the customer sees.
+    Unused fields are empty. A step that does not fit this shape is rejected
+    and treated as a failed attempt.
+    """
+
+    action: Literal["tool_call", "reply"]
+    tool: str = ""
+    arguments_json: str = "{}"
+    message: str = ""
+
+    @model_validator(mode="after")
+    def action_has_what_it_needs(self) -> "AgentAction":
+        """Pydantic hook: a reply needs text, and a tool call needs a tool name.
+
+        Also strips surrounding whitespace from ``tool`` and ``message``.
+        """
+        self.tool = self.tool.strip()
+        self.message = self.message.strip()
+        if self.action == "reply" and not self.message:
+            raise ValueError("reply has no message")
+        if self.action == "tool_call" and not self.tool:
+            raise ValueError("tool_call has no tool name")
+        return self
+
+
+class ResponseFormat(BaseModel):
+    """How one kind of model reply is requested and parsed.
+
+    Attributes:
+        name: Schema name sent to providers that want one.
+        schema_: Full JSON schema (strict-mode friendly).
+        gemini_schema: The same schema minus keywords Gemini may reject.
+        model: The pydantic class the reply text is validated into.
+    """
+
+    model_config = {"arbitrary_types_allowed": True, "protected_namespaces": ()}
+
+    name: str
+    schema_: dict
+    gemini_schema: dict
+    model: type[BaseModel]
+
+
+def _gemini_schema(schema: dict) -> dict:
+    """Drop ``additionalProperties`` from a schema, since Gemini's JSON-schema subset may reject it."""
+    return {key: value for key, value in schema.items() if key != "additionalProperties"}
+
+
+SIM_USER_FORMAT = ResponseFormat(
+    name="sim_user_turn",
+    schema_=SIM_USER_TURN_SCHEMA,
+    gemini_schema=_GEMINI_TURN_SCHEMA,
+    model=SimUserTurn,
+)
+AGENT_FORMAT = ResponseFormat(
+    name="agent_action",
+    schema_=AGENT_ACTION_SCHEMA,
+    gemini_schema=_gemini_schema(AGENT_ACTION_SCHEMA),
+    model=AgentAction,
+)
+
+
+class CallUsage(BaseModel):
+    """Usage and identity of one successful model call. Shared by ``LLMCall`` and ``AgentCall``.
+
+    ``requests`` counts HTTP requests this call took, retries included, because
+    free-tier quotas count requests. ``free_tier`` is True when nothing is billed.
+    ``estimated_cost_usd`` is a list-price estimate at paid rates; on the free
+    tier it is not what was paid, and it is None when the model has no price.
+    """
+
+    model_name: str
+    provider: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: float = 0.0
+    requests: int = 1
+    free_tier: bool = False
+    estimated_cost_usd: float | None = None
+
+
+class LLMCall(CallUsage):
+    """The result of one successful SimUser ``complete`` call: the turn plus its usage.
 
     This is also the record format of replay fixtures, so a stored list of
     these can stand in for a provider.
     """
 
     turn: SimUserTurn
-    model_name: str
-    provider: str
-    input_tokens: int = 0
-    output_tokens: int = 0
-    latency_ms: float = 0.0
-    # HTTP requests this turn took, retries included. Free-tier quotas count requests.
-    requests: int = 1
-    # True when the project is on a free tier, so nothing is billed.
-    free_tier: bool = False
-    # List-price estimate at paid rates. On the free tier this is not what you paid.
-    estimated_cost_usd: float | None = None
+
+
+class AgentCall(CallUsage):
+    """The result of one successful ``complete_agent`` call: the agent's step plus its usage."""
+
+    action: AgentAction
 
 
 class LLMClient(Protocol):
@@ -141,6 +239,29 @@ class LLMClient(Protocol):
 
         Returns:
             An ``LLMCall`` with the parsed turn and its usage.
+
+        Raises:
+            LLMError: If the call fails after retries.
+        """
+
+
+class AgentLLMClient(Protocol):
+    """Interface for the model behind an LLM agent. Separate from ``LLMClient`` so each stays small.
+
+    Implemented by ``GeminiClient`` and ``OpenAIClient`` (they provide both
+    interfaces) and by ``MockAgentClient``. ``ReplayLLMClient`` does not
+    implement it, so agent runs are not available in replay mode.
+    """
+
+    def complete_agent(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        temperature: float,
+        seed: int | None,
+    ) -> AgentCall:
+        """Ask the model for the agent's next step (a tool call or a reply).
 
         Raises:
             LLMError: If the call fails after retries.
@@ -289,6 +410,63 @@ class RecordingLLMClient:
         return result
 
 
+class MockAgentClient:
+    """Returns scripted agent steps and records the prompts it was given. For offline tests."""
+
+    def __init__(
+        self,
+        actions: list[AgentAction],
+        *,
+        model_name: str = "mock-agent",
+        provider: str = "mock",
+        input_tokens: int = 10,
+        output_tokens: int = 5,
+        latency_ms: float = 25.0,
+        estimated_cost_usd: float | None = 0.0,
+        requests: int = 1,
+        free_tier: bool = False,
+    ) -> None:
+        """Queue the steps to return and fix the usage numbers every call reports.
+
+        Args:
+            actions: Steps handed out in order, one per ``complete_agent`` call.
+            model_name, provider, input_tokens, output_tokens, latency_ms,
+            estimated_cost_usd, requests, free_tier: Reported verbatim on every ``AgentCall``.
+        """
+        self._actions = list(actions)
+        self._usage = {
+            "model_name": model_name,
+            "provider": provider,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "latency_ms": latency_ms,
+            "estimated_cost_usd": estimated_cost_usd,
+            "requests": requests,
+            "free_tier": free_tier,
+        }
+        self.calls: list[dict[str, object]] = []
+
+    def complete_agent(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        temperature: float,
+        seed: int | None,
+    ) -> AgentCall:
+        """Record the arguments, then return the next queued step.
+
+        Raises:
+            LLMError: If the queue is empty.
+        """
+        self.calls.append(
+            {"messages": messages, "model": model, "temperature": temperature, "seed": seed}
+        )
+        if not self._actions:
+            raise LLMError("Mock agent client has no actions left.")
+        return AgentCall(action=self._actions.pop(0), **self._usage)
+
+
 class _Spent:
     """Everything one complete() call used across its attempts, failed ones included."""
 
@@ -299,6 +477,7 @@ class _Spent:
         self.input_tokens = 0
         self.output_tokens = 0
         self.latency_ms = 0.0
+        self.model_name: str | None = None
         self._costs: list[float | None] = []
 
     def add_usage(self, input_tokens: int, output_tokens: int, cost: float | None) -> None:
@@ -384,8 +563,9 @@ class _HTTPClient:
         model: str,
         temperature: float,
         seed: int | None,
+        fmt: ResponseFormat,
     ) -> tuple[str, dict[str, str], dict[str, object]]:
-        """Hook: build the provider request.
+        """Hook: build the provider request asking for a reply shaped like ``fmt``.
 
         Returns:
             ``(url, headers, json_payload)``.
@@ -402,7 +582,7 @@ class _HTTPClient:
         raise NotImplementedError
 
     def _text(self, body: dict) -> str:
-        """Hook: pull the model's JSON text out of a response body (parsed later as ``SimUserTurn``)."""
+        """Hook: pull the model's JSON text out of a response body (parsed later into the requested format)."""
         raise NotImplementedError
 
     def _key_rejected(self, response: httpx.Response) -> bool:
@@ -427,24 +607,80 @@ class _HTTPClient:
         temperature: float,
         seed: int | None,
     ) -> LLMCall:
-        """Send the request, retrying transient failures, and return the parsed turn.
+        """Ask for the SimUser's next customer message.
 
-        Retries on timeouts, 429/5xx responses, and replies that are not valid
-        turn JSON, with exponential backoff or the provider's requested delay.
-        Does not retry a rejected key, a used-up daily quota, or other 4xx errors.
-        Usage from failed attempts is accumulated and reported either way.
+        See ``_complete`` for retry behavior.
 
         Raises:
             LLMError: When attempts run out or a non-retryable error occurs.
         """
-        url, headers, payload = self._request(messages, model, temperature, seed)
+        parsed, spent = self._complete(SIM_USER_FORMAT, messages, model, temperature, seed)
+        return LLMCall(turn=parsed, **self._usage_fields(spent, model))
+
+    def complete_agent(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        temperature: float,
+        seed: int | None,
+    ) -> AgentCall:
+        """Ask for the agent's next step: a tool call or a reply.
+
+        See ``_complete`` for retry behavior.
+
+        Raises:
+            LLMError: When attempts run out or a non-retryable error occurs.
+
+        Called by:
+            ``LLMAgent`` once per step of its tool loop.
+        """
+        parsed, spent = self._complete(AGENT_FORMAT, messages, model, temperature, seed)
+        return AgentCall(action=parsed, **self._usage_fields(spent, model))
+
+    def _usage_fields(self, spent: _Spent, requested_model: str) -> dict[str, object]:
+        """Turn the accumulated usage of a call into the keyword arguments of a ``CallUsage``."""
+        return {
+            "model_name": spent.model_name or requested_model,
+            "provider": self.provider,
+            "input_tokens": spent.input_tokens,
+            "output_tokens": spent.output_tokens,
+            "latency_ms": round(spent.latency_ms, 1),
+            "requests": spent.requests,
+            "free_tier": spent.free_tier,
+            "estimated_cost_usd": spent.cost(),
+        }
+
+    def _complete(
+        self,
+        fmt: ResponseFormat,
+        messages: list[dict[str, str]],
+        model: str,
+        temperature: float,
+        seed: int | None,
+    ) -> tuple[BaseModel, _Spent]:
+        """Send the request, retrying transient failures, and return the parsed reply.
+
+        Retries on timeouts, 429/5xx responses, and replies that are not valid
+        JSON for ``fmt``, with exponential backoff or the provider's requested
+        delay. Does not retry a rejected key, a used-up daily quota, or other
+        4xx errors. Usage from failed attempts is accumulated and reported
+        either way.
+
+        Returns:
+            ``(parsed_reply, spent)`` where ``spent`` holds the usage across attempts.
+
+        Raises:
+            LLMError: When attempts run out or a non-retryable error occurs.
+        """
+        url, headers, payload = self._request(messages, model, temperature, seed, fmt)
         spent = _Spent(self._free_tier)
         last_error = "The model request failed."
         with httpx.Client(timeout=self._timeout, transport=self._transport) as http:
             for attempt in range(self._max_attempts):
-                result, error, wait = self._attempt(http, url, headers, payload, model, spent)
+                result, error, wait = self._attempt(http, url, headers, payload, model, spent, fmt)
                 if result is not None:
-                    return result
+                    return result, spent
                 last_error = error or last_error
                 if attempt + 1 == self._max_attempts:
                     break
@@ -462,12 +698,13 @@ class _HTTPClient:
         payload: dict[str, object],
         requested_model: str,
         spent: _Spent,
-    ) -> tuple[LLMCall | None, str | None, float | None]:
+        fmt: ResponseFormat,
+    ) -> tuple[BaseModel | None, str | None, float | None]:
         """Make one HTTP attempt.
 
         Returns:
-            ``(result, error, wait)``. On success ``result`` is the ``LLMCall`` and
-            the others are ``None``. On a retryable failure ``result`` is ``None``,
+            ``(result, error, wait)``. On success ``result`` is the reply parsed
+            into ``fmt.model`` and the others are ``None``. On a retryable failure ``result`` is ``None``,
             ``error`` explains why, and ``wait`` is the provider's requested delay.
 
         Raises:
@@ -512,24 +749,11 @@ class _HTTPClient:
                 output_tokens,
                 _price(model_name, requested_model, input_tokens, output_tokens),
             )
-            turn = SimUserTurn.model_validate_json(self._text(body))
+            spent.model_name = model_name
+            parsed = fmt.model.model_validate_json(self._text(body))
         except (ValidationError, KeyError, IndexError, TypeError, ValueError, AttributeError):
             return None, "The model returned a message that did not match the expected JSON.", None
-        return (
-            LLMCall(
-                turn=turn,
-                model_name=model_name,
-                provider=self.provider,
-                input_tokens=spent.input_tokens,
-                output_tokens=spent.output_tokens,
-                latency_ms=round(spent.latency_ms, 1),
-                requests=spent.requests,
-                free_tier=spent.free_tier,
-                estimated_cost_usd=spent.cost(),
-            ),
-            None,
-            None,
-        )
+        return parsed, None, None
 
     def _record_usage(self, response: httpx.Response, requested_model: str, spent: _Spent) -> None:
         """Best-effort: count the tokens of a failed response so retries are billed in the totals.
@@ -581,6 +805,7 @@ class GeminiClient(_HTTPClient):
         model: str,
         temperature: float,
         seed: int | None,
+        fmt: ResponseFormat,
     ) -> tuple[str, dict[str, str], dict[str, object]]:
         """Build a ``generateContent`` request.
 
@@ -600,7 +825,7 @@ class GeminiClient(_HTTPClient):
         generation: dict[str, object] = {
             "temperature": temperature,
             "responseMimeType": "application/json",
-            "responseJsonSchema": _GEMINI_TURN_SCHEMA,
+            "responseJsonSchema": fmt.gemini_schema,
         }
         if seed is not None:
             generation["seed"] = seed
@@ -690,6 +915,7 @@ class OpenAIClient(_HTTPClient):
         model: str,
         temperature: float,
         seed: int | None,
+        fmt: ResponseFormat,
     ) -> tuple[str, dict[str, str], dict[str, object]]:
         """Build a ``chat/completions`` request with strict JSON-schema output and a Bearer token."""
         payload: dict[str, object] = {
@@ -699,9 +925,9 @@ class OpenAIClient(_HTTPClient):
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "sim_user_turn",
+                    "name": fmt.name,
                     "strict": True,
-                    "schema": SIM_USER_TURN_SCHEMA,
+                    "schema": fmt.schema_,
                 },
             },
         }

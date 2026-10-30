@@ -4,7 +4,7 @@
   "description": "A customer asks for a refund on order 1042, which never arrived. The agent asks for the account email and mentions a tracking number the customer was never given.",
   "notes": "The support agent follows a fixed script and does not read the customer. No tools run and no order database is updated. Refund language in the transcript is not a task-success result. The email and tracking number are made up.",
   "opening_role": "sim_user",
-  "max_turns": 8,
+  "max_turns": 12,
   "temperature": 0.7,
   "sim_user_id": "late_refund_customer",
   "agent_id": "scripted_support",
@@ -12,8 +12,14 @@
   "sim_user": {
     "goal": {
       "text": "Get a refund for order 1042. It was supposed to arrive last Tuesday and it has not.",
-      "markers": ["refund"],
-      "abandon_markers": ["never mind", "forget it", "forget about it"]
+      "markers": [
+        "refund"
+      ],
+      "abandon_markers": [
+        "never mind",
+        "forget it",
+        "forget about it"
+      ]
     },
     "style": "Polite and brief. Ask for one thing at a time.",
     "done_when": "End after the agent has confirmed the refund and you have thanked them.",
@@ -21,37 +27,50 @@
       {
         "id": "order_number",
         "text": "The order number is 1042.",
-        "markers": ["1042"],
+        "markers": [
+          "1042"
+        ],
         "disclosure": "volunteer",
         "required": true
       },
       {
         "id": "due_date",
         "text": "The order was supposed to arrive last Tuesday and has not arrived.",
-        "markers": ["tuesday"],
+        "markers": [
+          "tuesday"
+        ],
         "disclosure": "volunteer",
         "required": true
       },
       {
         "id": "wants_refund",
         "text": "You want a refund, not a replacement.",
-        "markers": ["refund"],
+        "markers": [
+          "refund"
+        ],
         "disclosure": "volunteer",
         "required": true
       },
       {
         "id": "account_email",
         "text": "The email on the account is jordan.lee@example.com.",
-        "markers": ["jordan.lee@example.com"],
+        "markers": [
+          "jordan.lee@example.com"
+        ],
         "disclosure": "on_request",
-        "unlock_phrases": ["email", "e-mail"]
+        "unlock_phrases": [
+          "email",
+          "e-mail"
+        ]
       }
     ],
     "unknown_facts": [
       {
         "id": "tracking_number",
         "label": "the package tracking number",
-        "markers": ["trk-88213"]
+        "markers": [
+          "trk-88213"
+        ]
       }
     ]
   },
@@ -66,5 +85,38 @@
     "Thanks. I can see tracking number TRK-88213 and it is stuck at a regional depot. Would you like a refund or a replacement?",
     "Confirmed. A refund for order 1042 will go back to the original payment method in 5 to 7 business days.",
     "Glad that is settled. I will close this out."
-  ]
+  ],
+  "environment": {
+    "as_of": "2026-10-26",
+    "policy_text": "Refunds are allowed for an order that is at least 3 days past its due date, or that is marked lost. Orders that were delivered on time or early are not eligible for a refund. Before any refund, ask the customer for the email address on their account and use exactly what they tell you. A refund returns the full order amount to the original payment method. Never refund an order twice. If you cannot help, offer to open a ticket.",
+    "orders": [
+      {
+        "order_id": "1042",
+        "customer_email": "jordan.lee@example.com",
+        "status": "in_transit",
+        "due_date": "2026-10-20",
+        "tracking_number": "TRK-88213",
+        "amount_cents": 4999,
+        "payment_method": "Visa ending 4242"
+      },
+      {
+        "order_id": "2087",
+        "customer_email": "casey.morgan@example.com",
+        "status": "delivered",
+        "due_date": "2026-10-24",
+        "delivered_on": "2026-10-22",
+        "tracking_number": "TRK-55102",
+        "amount_cents": 2999,
+        "payment_method": "Mastercard ending 1881"
+      }
+    ],
+    "expected_outcome": {
+      "refunds": [
+        {
+          "order_id": "1042",
+          "amount_cents": 4999
+        }
+      ]
+    }
+  }
 }

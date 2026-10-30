@@ -391,3 +391,83 @@ def test_missing_gemini_key_names_the_variable() -> None:
         assert "GEMINI_API_KEY" in str(error)
     else:
         raise AssertionError("expected LLMError")
+
+
+# ---- Agent steps (the same adapters, a different response shape) ----
+
+
+def _agent_json(**fields: str) -> str:
+    base = {"action": "reply", "tool": "", "arguments_json": "{}", "message": ""}
+    return json.dumps({**base, **fields})
+
+
+def test_gemini_agent_step_asks_for_the_agent_schema_and_parses_a_tool_call() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content.decode())
+        content = _agent_json(action="tool_call", tool="lookup_order", arguments_json='{"order_id": "1042"}')
+        return httpx.Response(200, json=_gemini_body(content, thought_tokens=3))
+
+    call = _gemini(handler).complete_agent(
+        messages=[{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
+        model="gemini-3.5-flash-lite",
+        temperature=0.2,
+        seed=4,
+    )
+
+    schema = seen["payload"]["generationConfig"]["responseJsonSchema"]
+    assert schema["properties"]["action"]["enum"] == ["tool_call", "reply"]
+    assert "additionalProperties" not in schema
+    assert (call.action.action, call.action.tool) == ("tool_call", "lookup_order")
+    assert json.loads(call.action.arguments_json) == {"order_id": "1042"}
+    assert call.provider == "gemini" and call.requests == 1 and call.free_tier is True
+    assert call.output_tokens == 6 + 3
+
+
+def test_openai_agent_step_uses_a_strict_named_schema() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content.decode())
+        return httpx.Response(200, json=_body(_agent_json(message="Hello there.")))
+
+    call = _client(handler).complete_agent(
+        messages=[{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
+        model="gpt-4o-mini",
+        temperature=0.2,
+        seed=None,
+    )
+
+    spec = seen["payload"]["response_format"]["json_schema"]
+    assert spec["name"] == "agent_action" and spec["strict"] is True
+    assert sorted(spec["schema"]["required"]) == ["action", "arguments_json", "message", "tool"]
+    assert call.action.message == "Hello there."
+    assert call.estimated_cost_usd == estimate_cost_usd("gpt-4o-mini", 11, 7)
+
+
+def test_both_kinds_of_call_use_the_same_retry_path_and_a_wrongly_shaped_step_is_retried() -> None:
+    attempts: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        if len(attempts) == 1:
+            # A reply with no message does not fit the agent shape.
+            return httpx.Response(200, json=_body(_agent_json(action="reply", message="")))
+        return httpx.Response(200, json=_body(_agent_json(message="Second try works.")))
+
+    call = _client(handler).complete_agent(messages=[], model="gpt-4o-mini", temperature=0.2, seed=1)
+
+    assert call.action.message == "Second try works."
+    assert call.requests == 2
+    assert call.input_tokens == 22  # the failed attempt is still counted
+
+
+def test_a_simuser_call_still_returns_a_simuser_turn_after_the_refactor() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        content = SimUserTurn(message="Hello.", end_conversation=True).model_dump_json()
+        return httpx.Response(200, json=_body(content))
+
+    call = _client(handler).complete(messages=[], model="gpt-4o-mini", temperature=0.7, seed=1)
+
+    assert (call.turn.message, call.turn.end_conversation) == ("Hello.", True)

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from simbench.models import Role
 from simbench.paths import scenarios_dir
 from simbench.spec import SimUserSpec
+from simbench.world import EnvironmentSpec
 
 
 class ScenarioNotFoundError(LookupError):
@@ -20,7 +21,7 @@ class ScenarioNotFoundError(LookupError):
 
 
 class Scenario(BaseModel):
-    """One configurable test case: who talks first, turn cap, SimUser spec, and agent script.
+    """One configurable test case: who talks first, turn cap, SimUser spec, agent script, and environment.
 
     Loaded from ``data/scenarios/<id>.json``. Nothing about a specific scenario
     is hard-coded in the runner, so a new scenario is a new file.
@@ -37,6 +38,8 @@ class Scenario(BaseModel):
     agent_id: str = Field(min_length=1)
     script_version: str = Field(min_length=1)
     sim_user: SimUserSpec | None = None
+    # The mock orders database, policy, and expected outcome. Needed by agents that use tools.
+    environment: EnvironmentSpec | None = None
     sim_user_lines: list[str] = Field(default_factory=list)
     agent_lines: list[str] = Field(default_factory=list)
 
@@ -91,3 +94,9 @@ def load_scenario(scenario_id: str, directory: Path | None = None) -> Scenario:
             f"Scenario file {path.name} declares id {scenario.id!r}, expected {scenario_id!r}"
         )
     return scenario
+
+
+def list_scenarios(directory: Path | None = None) -> list[Scenario]:
+    """Load every scenario file in the folder, sorted by id. Used by ``GET /scenarios``."""
+    directory = scenarios_dir() if directory is None else directory
+    return [load_scenario(path.stem, directory) for path in sorted(directory.glob("*.json"))]

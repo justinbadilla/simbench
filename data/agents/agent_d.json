@@ -1,0 +1,13 @@
+{
+  "id": "agent_d",
+  "label": "Agent D",
+  "description": "Agent C with a deliberately injected flaw in its prompt.",
+  "prompt": "flawed",
+  "tools": [
+    "lookup_order",
+    "issue_refund",
+    "create_ticket"
+  ],
+  "include_policy": true,
+  "flaw": "Told to refund whenever asked without checking the policy, and not to ask for the account email."
+}

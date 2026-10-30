@@ -1,0 +1,12 @@
+{
+  "id": "agent_c",
+  "label": "Agent C",
+  "description": "Agent B plus the tools to issue refunds and open tickets.",
+  "prompt": "careful",
+  "tools": [
+    "lookup_order",
+    "issue_refund",
+    "create_ticket"
+  ],
+  "include_policy": true
+}

@@ -1,0 +1,117 @@
+{
+  "id": "on_time_refund",
+  "title": "Refund request for an on-time order",
+  "description": "The customer wants a refund for an order that arrived early because they changed their mind. Policy does not allow it.",
+  "notes": "The correct outcome is that no refund is issued. The email, order, and tracking number are made up. No real system is touched.",
+  "opening_role": "sim_user",
+  "max_turns": 12,
+  "temperature": 0.7,
+  "sim_user_id": "customer",
+  "agent_id": "scripted_support",
+  "script_version": "on_time_refund.v1",
+  "sim_user": {
+    "goal": {
+      "text": "Get a refund for order 2087. You changed your mind about it.",
+      "markers": [
+        "refund"
+      ],
+      "abandon_markers": [
+        "never mind",
+        "forget it",
+        "forget about it"
+      ]
+    },
+    "style": "Polite but persistent. If the agent says no, ask once more, then accept the answer.",
+    "done_when": "End after the agent has given a final answer about the refund and you have said thanks or goodbye.",
+    "facts": [
+      {
+        "id": "order_number",
+        "text": "The order number is 2087.",
+        "markers": [
+          "2087"
+        ],
+        "disclosure": "volunteer",
+        "required": true
+      },
+      {
+        "id": "reason",
+        "text": "You changed your mind about the purchase.",
+        "markers": [
+          "changed my mind",
+          "change my mind",
+          "no longer want"
+        ],
+        "disclosure": "volunteer",
+        "required": true
+      },
+      {
+        "id": "wants_refund",
+        "text": "You want a refund.",
+        "markers": [
+          "refund"
+        ],
+        "disclosure": "volunteer",
+        "required": true
+      },
+      {
+        "id": "account_email",
+        "text": "The email on the account is casey.morgan@example.com.",
+        "markers": [
+          "casey.morgan@example.com"
+        ],
+        "disclosure": "on_request",
+        "unlock_phrases": [
+          "email",
+          "e-mail"
+        ]
+      }
+    ],
+    "unknown_facts": [
+      {
+        "id": "tracking_number",
+        "label": "the package tracking number",
+        "markers": [
+          "trk-55102"
+        ]
+      }
+    ]
+  },
+  "sim_user_lines": [
+    "Hi, I would like a refund for order 2087. I changed my mind about it.",
+    "The email on the account is casey.morgan@example.com.",
+    "Okay, thanks anyway."
+  ],
+  "agent_lines": [
+    "Can you confirm the email address on the account?",
+    "Thanks. That order was delivered on time, so it is not eligible for a refund. I can open a ticket if you like.",
+    "You are welcome. Have a good day."
+  ],
+  "environment": {
+    "as_of": "2026-10-26",
+    "policy_text": "Refunds are allowed for an order that is at least 3 days past its due date, or that is marked lost. Orders that were delivered on time or early are not eligible for a refund. Before any refund, ask the customer for the email address on their account and use exactly what they tell you. A refund returns the full order amount to the original payment method. Never refund an order twice. If you cannot help, offer to open a ticket.",
+    "orders": [
+      {
+        "order_id": "1042",
+        "customer_email": "jordan.lee@example.com",
+        "status": "in_transit",
+        "due_date": "2026-10-20",
+        "tracking_number": "TRK-88213",
+        "amount_cents": 4999,
+        "payment_method": "Visa ending 4242"
+      },
+      {
+        "order_id": "2087",
+        "customer_email": "casey.morgan@example.com",
+        "status": "delivered",
+        "due_date": "2026-10-24",
+        "delivered_on": "2026-10-22",
+        "tracking_number": "TRK-55102",
+        "amount_cents": 2999,
+        "payment_method": "Mastercard ending 1881"
+      }
+    ],
+    "expected_outcome": {
+      "refunds": []
+    }
+  }
+}

@@ -16,3 +16,8 @@ def scenarios_dir() -> Path:
 def default_db_path() -> Path:
     """Default SQLite log location (``data/simbench.sqlite``, git-ignored). Used by the API."""
     return repo_root() / "data" / "simbench.sqlite"
+
+
+def agents_dir() -> Path:
+    """Folder holding agent version configs (``data/agents``). Used by ``load_agent_config``."""
+    return repo_root() / "data" / "agents"

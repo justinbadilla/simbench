@@ -4,12 +4,16 @@ import secrets
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from simbench.agent import Agent, ScriptedAgent
 from simbench.checks import evaluate
-from simbench.llm import DEFAULT_GEMINI_MODEL, LLMCall, LLMClient, LLMError
+from simbench.environment import Environment
+from simbench.llm import DEFAULT_GEMINI_MODEL, LLMClient, LLMError
 from simbench.models import Message, Role, TerminationReason, Transcript, Usage, Variant
+from simbench.outcome import evaluate_outcome
 from simbench.scenario import Scenario
 from simbench.sim_user import build_instructions, build_model_messages, prompt_version
 from simbench.state import SimUserState
+from simbench.usage import CallTotals
 
 
 def run_simulation(
@@ -93,6 +97,7 @@ def run_llm_simulation(
     scenario: Scenario,
     client: LLMClient,
     *,
+    agent: Agent | None = None,
     max_turns: int | None = None,
     model: str = DEFAULT_GEMINI_MODEL,
     variant: Variant = "stateful",
@@ -101,13 +106,20 @@ def run_llm_simulation(
     run_id: str | None = None,
     created_at: datetime | None = None,
 ) -> Transcript:
-    """Run one conversation: an LLM SimUser against the scenario's scripted agent.
+    """Run one conversation: an LLM SimUser against an agent.
 
-    The agent still speaks its next scripted line and does not read the customer.
+    The agent is whatever implements ``Agent``. By default it is the scenario's
+    scripted lines, which do not read the customer. With an ``LLMAgent`` it is a
+    model that reads the conversation and can call tools in the scenario's
+    mock environment. The environment is rebuilt from the scenario for every
+    run, so runs never share state.
+
     Stop for ``sim_user_ended`` when the model sets end_conversation. Stop for
-    ``script_complete`` when the agent has no line left. Stop for ``max_turns``
-    when the next speaker could still talk but the cap is full. Stop for
-    ``model_error`` when the client fails, and keep the messages already said.
+    ``script_complete`` when the agent has nothing left to say. Stop for
+    ``max_turns`` when the next speaker could still talk but the cap is full.
+    Stop for ``step_limit`` when the agent used every tool step in a turn
+    without replying. Stop for ``model_error`` when either model call fails,
+    and keep the messages already said.
 
     The harness tracks SimUser state from the messages as they happen. With the
     ``stateful`` variant that state decides what the prompt contains each turn.
@@ -119,9 +131,10 @@ def run_llm_simulation(
     No order database is updated.
 
     Args:
-        scenario: Must have a ``sim_user`` spec. Supplies the agent script.
-        client: Any ``LLMClient`` (Gemini, OpenAI, mock, or replay). Injected so
+        scenario: Must have a ``sim_user`` spec. Supplies the agent script and the environment.
+        client: The SimUser's ``LLMClient`` (Gemini, OpenAI, mock, or replay). Injected so
             tests run offline.
+        agent: The agent under test. Defaults to ``ScriptedAgent`` playing the scenario's lines.
         max_turns: Override the scenario's message cap. Must be >= 0.
         model: Model name sent to the client and used for cost lookup.
         variant: ``"stateful"`` or ``"persona"`` prompt style.
@@ -133,8 +146,10 @@ def run_llm_simulation(
 
     Returns:
         A ``Transcript`` holding the messages, the prompt for every turn, the
-        spec, the state log, the checks (or ``None`` after a model error), the
-        termination reason, any error text, and aggregated ``Usage``.
+        spec, the state log, the SimUser checks, the tool calls, the final
+        database state, the task outcome (checks and outcome are ``None`` after a
+        model error), the termination reason, any error text, and ``Usage`` for
+        the SimUser and for the agent separately.
 
     Raises:
         ValueError: If the scenario has no SimUser spec or ``max_turns`` is negative.
@@ -156,28 +171,35 @@ def run_llm_simulation(
     state = SimUserState(spec)
     turn_prompts: list[str] = []
     messages: list[Message] = []
-    agent_cursor = 0
     role = scenario.opening_role
-    totals = _CallTotals()
+    totals = CallTotals()
     reason = TerminationReason.max_turns
     error = ""
+    agent = agent if agent is not None else ScriptedAgent(scenario.agent_lines, scenario.agent_id)
+    env = Environment(scenario.environment) if scenario.environment is not None else None
 
     while True:
         if role is Role.agent:
-            if agent_cursor >= len(scenario.agent_lines):
+            if agent.exhausted():
                 reason = TerminationReason.script_complete
                 break
             if len(messages) >= limit:
                 reason = TerminationReason.max_turns
                 break
-            agent_message = Message(
-                turn_index=len(messages),
-                role=Role.agent,
-                content=scenario.agent_lines[agent_cursor],
-            )
+            try:
+                # The agent gets a copy of the conversation so it cannot edit the record.
+                reply = agent.respond(list(messages), env, seed=chosen_seed)
+            except LLMError as exc:
+                reason = TerminationReason.model_error
+                error = str(exc)
+                break
+            if reply.message is None:
+                reason = TerminationReason.step_limit
+                error = "The agent used every tool step in one turn without replying."
+                break
+            agent_message = Message(turn_index=len(messages), role=Role.agent, content=reply.message)
             messages.append(agent_message)
             state.observe(agent_message)
-            agent_cursor += 1
             role = Role.sim_user
             continue
 
@@ -211,7 +233,11 @@ def run_llm_simulation(
 
     # With no model call (a zero cap), show the prompt the first turn would have used.
     first_prompt = turn_prompts[0] if turn_prompts else build_instructions(scenario, variant, state)
-    checks = None if reason is TerminationReason.model_error else evaluate(spec, messages)
+    finished = reason is not TerminationReason.model_error
+    checks = evaluate(spec, messages) if finished else None
+    outcome = None
+    if env is not None and scenario.environment is not None and finished:
+        outcome = evaluate_outcome(scenario.environment.expected_outcome, env.snapshot())
 
     return Transcript(
         run_id=run_id or str(uuid4()),
@@ -220,7 +246,7 @@ def run_llm_simulation(
         scenario_title=scenario.title,
         notes=scenario.notes,
         sim_user_id=scenario.sim_user_id,
-        agent_id=scenario.agent_id,
+        agent_id=agent.id,
         script_version=scenario.script_version,
         opening_role=scenario.opening_role,
         max_turns=limit,
@@ -231,89 +257,14 @@ def run_llm_simulation(
         sim_user_spec=spec,
         state_log=state.events,
         checks=checks,
+        agent_prompt=agent.prompt,
+        agent_usage=agent.usage(seed=chosen_seed),
+        environment_spec=scenario.environment,
+        tool_calls=list(env.calls) if env is not None else [],
+        final_state=env.snapshot() if env is not None else None,
+        outcome=outcome,
         messages=messages,
         termination_reason=reason,
         error=error,
         usage=totals.usage(model=model, prompt=prompt_version(scenario, variant), seed=chosen_seed),
     )
-
-
-class _CallTotals:
-    """Running totals of model usage across all calls in one run.
-
-    Collects tokens, latency, request count, per-call costs, and free-tier
-    flags from successful calls and failed ones alike, then folds them into one
-    ``Usage`` record. Failed attempts are included because they still consume
-    quota and time.
-    """
-
-    def __init__(self) -> None:
-        """Start with all counters at zero and no model or provider known yet."""
-        self.input_tokens = 0
-        self.output_tokens = 0
-        self.latency_ms = 0.0
-        self.requests = 0
-        self.costs: list[float | None] = []
-        self.free_flags: list[bool] = []
-        self.model_name: str | None = None
-        self.provider: str | None = None
-
-    def add_call(self, result: LLMCall) -> None:
-        """Add the usage of one successful model call and remember its model and provider."""
-        self.input_tokens += result.input_tokens
-        self.output_tokens += result.output_tokens
-        self.latency_ms += result.latency_ms
-        self.requests += result.requests
-        self.costs.append(result.estimated_cost_usd)
-        self.free_flags.append(result.free_tier)
-        self.model_name = result.model_name
-        self.provider = result.provider
-
-    def add_error(self, error: LLMError) -> None:
-        """Add the usage a failed call still incurred (retries, partial tokens).
-
-        A cost or free-tier flag is only recorded if the failure actually spent
-        tokens or sent a request, so an error before any request does not skew
-        the totals.
-        """
-        self.input_tokens += error.input_tokens
-        self.output_tokens += error.output_tokens
-        self.latency_ms += error.latency_ms
-        self.requests += error.requests
-        if error.input_tokens or error.output_tokens:
-            self.costs.append(error.estimated_cost_usd)
-        if error.requests:
-            self.free_flags.append(error.free_tier)
-        if error.model_name:
-            self.model_name = error.model_name
-
-    def usage(self, *, model: str, prompt: str, seed: int) -> Usage:
-        """Fold the totals into the ``Usage`` stored on the transcript.
-
-        Cost rules: no priced calls gives 0.0; if any call had an unknown price
-        the total is ``None`` rather than a partial sum. ``free_tier`` is true
-        only if at least one call happened and every call was free.
-
-        Args:
-            model: Fallback name when no call reported one.
-            prompt: The prompt version string (see ``prompt_version``).
-            seed: The seed used for the run.
-        """
-        if not self.costs:
-            cost: float | None = 0.0
-        elif any(item is None for item in self.costs):
-            cost = None
-        else:
-            cost = round(sum(item for item in self.costs if item is not None), 8)
-        return Usage(
-            model_name=self.model_name or model,
-            provider=self.provider,
-            prompt_version=prompt,
-            seed=seed,
-            input_tokens=self.input_tokens,
-            output_tokens=self.output_tokens,
-            latency_ms=round(self.latency_ms, 1),
-            requests=self.requests,
-            free_tier=bool(self.free_flags) and all(self.free_flags),
-            estimated_cost_usd=cost,
-        )

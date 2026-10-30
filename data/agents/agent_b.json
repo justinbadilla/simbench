@@ -1,0 +1,10 @@
+{
+  "id": "agent_b",
+  "label": "Agent B",
+  "description": "Careful prompt and the company policy. Can look up orders but cannot refund.",
+  "prompt": "careful",
+  "tools": [
+    "lookup_order"
+  ],
+  "include_policy": true
+}

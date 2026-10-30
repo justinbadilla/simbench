@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from simbench.spec import SimUserSpec
+from simbench.world import EnvironmentSpec, EnvironmentState, ToolCallRecord
 
 # How the SimUser's knowledge reaches the model. Same spec, different presentation.
 Variant = Literal["persona", "stateful"]
@@ -26,16 +27,18 @@ class TerminationReason(str, Enum):
     ``max_turns``: the message cap was reached while someone could still speak.
     ``sim_user_ended``: the model ended the chat on its own message.
     ``model_error``: the provider call failed; earlier messages are kept.
+    ``step_limit``: the agent used every tool step in one turn without replying.
     """
 
     script_complete = "script_complete"
     max_turns = "max_turns"
     sim_user_ended = "sim_user_ended"
     model_error = "model_error"
+    step_limit = "step_limit"
 
 
 class Usage(BaseModel):
-    """Model accounting for one run.
+    """Model accounting for one side of a run (the SimUser, or the agent).
 
     Scripted runs leave the model name empty and the counts at zero.
     ``requests`` counts HTTP requests including retries, because free-tier
@@ -104,6 +107,18 @@ class ChecksReport(BaseModel):
     all_passed: bool
 
 
+class OutcomeReport(BaseModel):
+    """Whether the task was done, judged only from the final database state.
+
+    ``success`` is False if any check failed. This is separate from ``ChecksReport``,
+    which is about how the SimUser behaved. Nothing here reads the conversation text.
+    """
+
+    outcome_version: str
+    success: bool
+    checks: list[CheckResult]
+
+
 class Transcript(BaseModel):
     """The complete record of one run, and the API's response body.
 
@@ -134,6 +149,13 @@ class Transcript(BaseModel):
     sim_user_spec: SimUserSpec | None = None
     state_log: list[StateEvent] = Field(default_factory=list)
     checks: ChecksReport | None = None
+    # Agent side (V3). Empty for scripted runs without an environment.
+    agent_prompt: str = ""
+    agent_usage: Usage | None = None
+    environment_spec: EnvironmentSpec | None = None
+    tool_calls: list[ToolCallRecord] = Field(default_factory=list)
+    final_state: EnvironmentState | None = None
+    outcome: OutcomeReport | None = None
     messages: list[Message]
     termination_reason: TerminationReason
     error: str = ""
@@ -147,4 +169,7 @@ class RunRequest(BaseModel):
     max_turns: int | None = Field(default=None, ge=0)
     mode: Literal["llm", "scripted"] = "llm"
     variant: Variant = "stateful"
+    # "scripted" plays the scenario's fixed agent lines. Any other value is an agent
+    # config id from data/agents (for example "agent_c").
+    agent: str = "scripted"
     seed: int | None = Field(default=None, ge=0)
